@@ -70,8 +70,8 @@ def client_kwargs():
 
 
 async def main():
-    sem = asyncio.Semaphore(20)
-    retry = RetryPolicy(max_retries=3, backoff_initial=0.5)
+    sem = asyncio.Semaphore(int(os.environ.get("CONCURRENCY", 20)))
+    retry = RetryPolicy(max_retries=8, backoff_initial=1.0)
     async with AsyncTypeSafeClient(retry=retry, **client_kwargs()) as client:
         # warm-up call so connection setup isn't counted
         await client.system_one({"message": "hello"}, {"x": Noul(instructions="This is a greeting.")})
