@@ -12,7 +12,8 @@ import json
 import os
 import time
 
-from typesafe_sdk import AsyncTypeSafeClient, Choice, Noul, RetryPolicy, Score, TypeSafeRateLimitError
+from typesafe_sdk import (AsyncTypeSafeClient, Choice, Noul, RetryPolicy, Score, TypeSafeAPIConnectionError,
+                          TypeSafeAPITimeoutError, TypeSafeInternalServerError, TypeSafeRateLimitError)
 
 from inbox import INBOX
 
@@ -44,7 +45,7 @@ QUESTIONS = {
 
 
 async def classify(client, sem, i, text):
-    # Retry 429s ourselves so latency_ms only measures the call that succeeded.
+    # Retry 429s/5xx ourselves so latency_ms only measures the call that succeeded.
     async with sem:
         for attempt in range(12):
             try:
@@ -52,9 +53,10 @@ async def classify(client, sem, i, text):
                 r = await client.system_one({"message": text}, QUESTIONS)
                 ms = (time.perf_counter() - t0) * 1000
                 break
-            except TypeSafeRateLimitError:
+            except (TypeSafeRateLimitError, TypeSafeInternalServerError,
+                    TypeSafeAPIConnectionError, TypeSafeAPITimeoutError) as e:
                 wait = min(2 ** attempt, 60)
-                print(f"  #{i}: rate limited, retrying in {wait}s")
+                print(f"  #{i}: {type(e).__name__}, retrying in {wait}s")
                 await asyncio.sleep(wait)
         else:
             print(f"  #{i}: gave up, rerun to resume")
