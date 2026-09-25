@@ -201,17 +201,13 @@
     @keyframes rise { from { transform: translateY(10px); } to { transform: none; } }
   }
 
-  /* PDF export: one slide per page, no viewer chrome */
-  @page { size: 1080px 1350px; margin: 0; }
-  @media print {
-    body { background: none; padding: 0; }
-    .viewer-head, .controls, .caption { display: none !important; }
-    .viewer { max-width: none; display: block; }
-    .frame { aspect-ratio: auto; overflow: visible; box-shadow: none; border-radius: 0; background: none; }
-    .frame .slide { position: static; transform: none; visibility: visible !important; break-after: page; }
-    .frame .slide:last-child { break-after: auto; }
-    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  }
+  /* PDF export (#export): slides stacked at full size, no viewer chrome */
+  body.export { background: none; padding: 0; }
+  .export .viewer-head, .export .controls, .export .caption { display: none; }
+  .export .viewer { max-width: none; display: block; }
+  .export .frame { aspect-ratio: auto; overflow: visible; box-shadow: none; border-radius: 0; background: none; }
+  .export .frame .slide { position: static; transform: none; visibility: visible; }
+  .export .frame .slide .slide-body { animation: none; }
 </style>
 
 <main class="viewer">
@@ -460,6 +456,7 @@ What would you let it decide first in your business? 👇
     document.getElementById('chart').innerHTML = s + '</svg>';
   }
   drawChart();
+  if (location.hash === '#export') document.body.classList.add('export');
 
   const frame = document.getElementById('frame');
   const slides = [...frame.querySelectorAll('.slide')];
