@@ -12,11 +12,12 @@ import json
 import os
 import time
 
-from typesafe_sdk import AsyncTypeSafeClient, Choice, Noul, RetryPolicy, Score
+from typesafe_sdk import AsyncTypeSafeClient, Choice, Noul, RetryPolicy, Score, TypeSafeRateLimitError
 
 from inbox import INBOX
 
 PRICE_PER_M_INPUT = 0.042  # USD, output tokens are free
+CACHE = "cache.json"  # answers saved as they arrive, so a rerun resumes
 
 QUESTIONS = {
     "team": Choice(
@@ -43,11 +44,23 @@ QUESTIONS = {
 
 
 async def classify(client, sem, i, text):
+    # Retry 429s ourselves so latency_ms only measures the call that succeeded.
     async with sem:
-        t0 = time.perf_counter()
-        r = await client.system_one({"message": text}, QUESTIONS)
-        ms = (time.perf_counter() - t0) * 1000
+        for attempt in range(12):
+            try:
+                t0 = time.perf_counter()
+                r = await client.system_one({"message": text}, QUESTIONS)
+                ms = (time.perf_counter() - t0) * 1000
+                break
+            except TypeSafeRateLimitError:
+                wait = min(2 ** attempt, 60)
+                print(f"  #{i}: rate limited, retrying in {wait}s")
+                await asyncio.sleep(wait)
+        else:
+            print(f"  #{i}: gave up, rerun to resume")
+            return None
     team = r.choices["team"]
+    print(f"  #{i}: {team.choice} ({ms:.0f} ms)")
     return {
         "id": i,
         "latency_ms": round(ms, 1),
@@ -71,13 +84,25 @@ def client_kwargs():
 
 async def main():
     sem = asyncio.Semaphore(int(os.environ.get("CONCURRENCY", 20)))
-    retry = RetryPolicy(max_retries=8, backoff_initial=1.0)
-    async with AsyncTypeSafeClient(retry=retry, **client_kwargs()) as client:
-        # warm-up call so connection setup isn't counted
-        await client.system_one({"message": "hello"}, {"x": Noul(instructions="This is a greeting.")})
+    cache = json.load(open(CACHE)) if os.path.exists(CACHE) else {}
+    todo = [i for i in range(len(INBOX)) if str(i) not in cache]
+    print(f"{len(cache)} cached, {len(todo)} to go")
+
+    async def run(client, i):
+        p = await classify(client, sem, i, INBOX[i][0])
+        if p:
+            cache[str(i)] = p
+            json.dump(cache, open(CACHE, "w"), indent=2)
+
+    async with AsyncTypeSafeClient(retry=RetryPolicy(max_retries=0), **client_kwargs()) as client:
         t0 = time.perf_counter()
-        preds = await asyncio.gather(*(classify(client, sem, i, m[0]) for i, m in enumerate(INBOX)))
+        await asyncio.gather(*(run(client, i) for i in todo))
         wall = time.perf_counter() - t0
+
+    if len(cache) < len(INBOX):
+        print(f"\n{len(INBOX) - len(cache)} messages still missing, run again to finish.")
+        return
+    preds = [cache[str(i)] for i in range(len(INBOX))]
 
     rows = []
     for (text, team, churn), p in zip(INBOX, preds):
@@ -100,7 +125,7 @@ async def main():
         "model": rows[0]["model"],
         "messages": n,
         "questions_per_message": len(QUESTIONS),
-        "wall_seconds": round(wall, 2),
+        "wall_seconds_last_run": round(wall, 2),
         "median_latency_ms": lat[n // 2],
         "p95_latency_ms": lat[int(n * 0.95) - 1],
         "input_tokens": tokens,
