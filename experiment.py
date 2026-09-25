@@ -4,10 +4,12 @@ Sends 60 hand-labelled customer messages to TypeSafe's Jev decision model in
 parallel, then measures speed, cost, accuracy, and how accuracy changes when
 you only automate the answers Jev is confident about.
 
-Run:  TYPESAFE_API_KEY=... python experiment.py
+Run with a TypeSafe key:          TYPESAFE_API_KEY=... python experiment.py
+or through Vercel's AI Gateway:   AI_GATEWAY_API_KEY=... python experiment.py
 """
 import asyncio
 import json
+import os
 import time
 
 from typesafe_sdk import AsyncTypeSafeClient, Choice, Noul, RetryPolicy, Score
@@ -59,10 +61,18 @@ async def classify(client, sem, i, text):
     }
 
 
+def client_kwargs():
+    gateway_key = os.environ.get("AI_GATEWAY_API_KEY")
+    if gateway_key:
+        return {"api_key": gateway_key, "base_url": "https://ai-gateway.vercel.sh/typesafe",
+                "model": "typesafe-ai/jev"}
+    return {}
+
+
 async def main():
     sem = asyncio.Semaphore(20)
     retry = RetryPolicy(max_retries=3, backoff_initial=0.5)
-    async with AsyncTypeSafeClient(retry=retry) as client:
+    async with AsyncTypeSafeClient(retry=retry, **client_kwargs()) as client:
         # warm-up call so connection setup isn't counted
         await client.system_one({"message": "hello"}, {"x": Noul(instructions="This is a greeting.")})
         t0 = time.perf_counter()
